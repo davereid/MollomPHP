@@ -4,6 +4,8 @@
  * @file
  * Mollom client class.
  *
+ * @license http://www.gnu.org/licenses/old-licenses/gpl-2.0.html GNU GPL v2
+ *
  * @todo Refine exceptions by necessity of having to react differently.
  *   - All 5xx HTTP codes, MollomRedirectException, and MollomResponseException
  *     should make the client try the next server.
