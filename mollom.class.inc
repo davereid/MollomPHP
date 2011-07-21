@@ -63,8 +63,9 @@ class MollomException extends Exception {
    */
   protected $severity = 'debug';
 
-  public $arguments = array();
-
+  /**
+   * Overrides Exception::__construct().
+   */
   function __construct($message = '', $code = 0, Exception $previous = NULL, Mollom $mollom, array $arguments = array()) {
     // Fatal error on PHP <5.3 when passing more arguments to Exception.
     if (version_compare(phpversion(), '5.3') >= 0) {
@@ -95,18 +96,6 @@ class MollomException extends Exception {
       );
     }
     $mollom->log[] = $message;
-
-    // @todo Remove?
-    $this->setArguments($arguments);
-  }
-
-  public function setArguments($arguments) {
-    $this->arguments = $arguments;
-    return $this;
-  }
-
-  public function getArguments() {
-    return $this->arguments;
   }
 }
 
@@ -115,8 +104,6 @@ class MollomException extends Exception {
  *
  * Thrown in case a HTTP request results in code <= 0, denoting a low-level
  * communication error.
- *
- * @todo Not actively caught anywhere yet.
  */
 class MollomNetworkException extends MollomException {
   protected $severity = 'error';
@@ -216,38 +203,48 @@ abstract class Mollom {
    *
    * @var string
    */
-  public $keyPublic = '';
+  public $publicKey = '';
 
   /**
    * The private Mollom API key to use for request authentication.
    *
    * @var string
    */
-  public $keyPrivate = '';
+  public $privateKey = '';
 
   /**
    * The list of Mollom servers to communicate with, as returned by Mollom.
+   *
+   * @var array
+   *
+   * @see Mollom::getServers()
    */
   public $servers = array();
 
   /**
    * A hard-coded list of Mollom servers to fetch the server list from.
+   *
+   * @var array
    */
-  public $serversInit = array('http://megatron.mollom.com');
+  public $serversInit = array('http://rest.mollom.com');
 
   /**
    * The status code of the last response or TRUE if it succeeded.
+   *
+   * @var int|bool|null
    */
   public $lastResponseCode = NULL;
 
   /**
    * A list of logged requests.
+   *
+   * @var array
    */
   public $log = array();
 
   function __construct() {
-    $this->keyPublic = $this->loadConfiguration('publicKey');
-    $this->keyPrivate = $this->loadConfiguration('privateKey');
+    $this->publicKey = $this->loadConfiguration('publicKey');
+    $this->privateKey = $this->loadConfiguration('privateKey');
   }
 
   /**
@@ -302,7 +299,7 @@ abstract class Mollom {
    * decisions on new features or the necessity of back-porting improved
    * functionality to older versions.
    *
-   * @return
+   * @return array
    *   An associative array containing:
    *   - platformName: The name of the platform/distribution; e.g., "Drupal".
    *   - platformVersion: The version of platform/distribution; e.g., "7.0".
@@ -338,6 +335,8 @@ abstract class Mollom {
 
   /**
    * Returns the current request time as UNIX timestamp.
+   *
+   * @return integer
    */
   public function getRequestTime() {
     return $_SERVER['REQUEST_TIME'];
@@ -362,9 +361,15 @@ abstract class Mollom {
    *
    * Make sure your server's time is synchronized with the world clocks,
    * and that you don't share your private key with anyone else.
+   *
+   * @return array
+   *   An associative array containing HMAC authentication request parameters
+   *   to be sent to Mollom.
+   *
+   * @throws MollomAuthenticationException
    */
   public function getAuthentication() {
-    if (empty($this->keyPublic) || empty($this->keyPrivate)) {
+    if (empty($this->publicKey) || empty($this->privateKey)) {
       throw new MollomAuthenticationException('Missing API keys.', self::AUTH_ERROR, NULL, $this);
     }
 
@@ -377,11 +382,11 @@ abstract class Mollom {
 
     // Calculate a HMAC-SHA1 according to RFC 2104.
     // @see http://www.ietf.org/rfc/rfc2104.txt
-    $request_data = $time . ':' . $nonce . ':' . $this->keyPrivate;
-    $hash = base64_encode(hash_hmac('sha1', $request_data, $this->keyPrivate, TRUE));
+    $request_data = $time . ':' . $nonce . ':' . $this->privateKey;
+    $hash = base64_encode(hash_hmac('sha1', $request_data, $this->privateKey, TRUE));
 
     // Return HMAC authentication parameters as a keyed array.
-    $data['publicKey'] = $this->keyPublic;
+    $data['publicKey'] = $this->publicKey;
     $data['time'] = $time;
     $data['hash'] = $hash;
     $data['nonce'] = $nonce;
@@ -391,6 +396,10 @@ abstract class Mollom {
 
   /**
    * Fetches Mollom servers from local configuration or retrieves a new list.
+   *
+   * @return
+   *   An indexed array of Mollom servers, which are also assigned to
+   *   $this->servers.
    *
    * @see Mollom::refreshServers()
    */
@@ -428,6 +437,9 @@ abstract class Mollom {
    * configuration value is not yet or no longer available, or when a Mollom
    * server specifically asks the client to refresh its server list.
    *
+   * @return array
+   *   An indexed array of server URLs retrieved from Mollom.
+   *
    * @see Mollom::getServers()
    * @see Mollom::query()
    * @see MollomRefreshException
@@ -448,7 +460,7 @@ abstract class Mollom {
       return $servers;
     }
 
-    $path = 'site/' . $this->keyPublic;
+    $path = 'site/' . $this->publicKey;
     $expected = array('site', 'servers');
     foreach ($this->serversInit as $server) {
       try {
@@ -485,6 +497,10 @@ abstract class Mollom {
    *   of parent element keys to the element and the element key itself; e.g., a
    *   value of array('site', 'servers') expects $response['site']['servers'] to
    *   exist in the response.
+   *
+   * @return mixed
+   *   On success, the parsed response body. On failure, the last response code,
+   *   in case it is a known one; otherwise Mollom::NETWORK_ERROR.
    *
    * @see Mollom::request()
    */
@@ -568,7 +584,6 @@ abstract class Mollom {
       catch (MollomException $e) {
         // If the resource does not exist, there is no point in trying another
         // server.
-        // @todo Error handling?
         if ($e->getCode() == 404) {
           break;
         }
@@ -578,7 +593,6 @@ abstract class Mollom {
       }
 
       // Unless we have a positive result, continue to next server.
-      // @todo Handle uncaught exceptions and errors?
       if ($this->lastResponseCode === TRUE) {
         break;
       }
@@ -673,7 +687,7 @@ abstract class Mollom {
    * $parsed_response = $this->parseXML($elements);
    * @endcode
    *
-   * @param $sxi
+   * @param SimpleXMLIterator $sxi
    *   A SimpleXMLIterator structure of the server response body.
    *
    * @return array
@@ -729,7 +743,7 @@ abstract class Mollom {
    * @param array $expected
    *   A list of parent keys of the value, starting with the outermost key.
    *
-   * @return
+   * @return bool
    *   TRUE if all the parent keys exist, FALSE otherwise.
    *
    * @see Mollom::request()
@@ -765,7 +779,7 @@ abstract class Mollom {
    * @param string $parent
    *   Internal use only. Used to build the $query array key for nested items.
    *
-   * @return array
+   * @return string
    *   A rawurlencoded string which can be used as or appended to the URL query
    *   string.
    *
@@ -851,6 +865,14 @@ abstract class Mollom {
     return $result;
   }
 
+  /**
+   * Retrieves a list of sites accessible to this client.
+   *
+   * Used by Mollom resellers only.
+   *
+   * @return array
+   *   An array containing site resources, as returned by Mollom::getsite().
+   */
   public function getSites() {
     $result = $this->query('GET', 'site', array(), array('list'));
     // In XML, 'list' is a string when blacklist is empty.
@@ -866,22 +888,69 @@ abstract class Mollom {
     return $result;
   }
 
-  public function getSite($siteId = NULL) {
-    if (!isset($siteId)) {
-      $siteId = $this->keyPublic;
+  /**
+   * Retrieves information about a site.
+   *
+   * @param string $publicKey
+   *   (optional) The public Mollom API key of the site to retrieve. Defaults to
+   *   the public key of the client.
+   *
+   * @return mixed
+   *   On success, an associative array containing:
+   *   - publicKey: The public Mollom API key of the site.
+   *   - privateKey: The private Mollom API key of the site.
+   *   - url: The URL of the site.
+   *   - email: The e-mail address of the primary contact of the site.
+   *   - languages: (optional) An array of language ISO codes, content is
+   *     expected to submitted in on the site.
+   *   - platformName: (optional) The name of the platform running the site
+   *     (e.g., "Drupal").
+   *   - platformVersion: (optional) The version of the platform running the
+   *     site (e.g., "6.20").
+   *   - clientName: (optional) The name of the Mollom client plugin used
+   *     (e.g., "Mollom").
+   *   - clientVersion: (optional) The version of the Mollom client plugin used
+   *     (e.g., "6.15").
+   *   On failure, the error response code returned by the server.
+   */
+  public function getSite($publicKey = NULL) {
+    if (!isset($publicKey)) {
+      $publicKey = $this->publicKey;
     }
-    $result = $this->query('GET', 'site/' . $siteId, array(), array('site'));
+    $result = $this->query('GET', 'site/' . $publicKey, array(), array('site'));
     return isset($result['site']) ? $result['site'] : $result;
   }
 
-  public function createSite($data = array()) {
+  /**
+   * Creates a new site.
+   *
+   * @param array $data
+   *   An associative array of properties for the new site. At least 'url' and
+   *   'email' are required. See Mollom::getSite() for details.
+   *
+   * @return mixed
+   *   On success, the full site information of the created site; see
+   *   Mollom::getSite() for details. On failure, the error response code
+   *   returned by the server. Or FALSE if 'url' or 'email' was not specified.
+   */
+  public function createSite(array $data = array()) {
+    if (empty($data['url']) || empty($data['email'])) {
+      return FALSE;
+    }
     $result = $this->query('POST', 'site', $data, array('site'));
     return isset($result['site']) ? $result['site'] : $result;
   }
 
+  /**
+   * Updates a site to verify API keys and send client information.
+   *
+   * @return mixed
+   *   TRUE on success. On failure, the error response code returned by the
+   *   server; one of Mollom::AUTH_ERROR or Mollom::NETWORK_ERROR.
+   */
   public function verifyKey() {
     $data = $this->getClientInformation();
-    $result = $this->query('POST', 'site/' . $this->keyPublic, $data, array('site'));
+    $result = $this->query('POST', 'site/' . $this->publicKey, $data, array('site'));
     // If the public key could not be found, make sure to return an
     // authentication error.
     if ($this->lastResponseCode === 404) {
@@ -891,12 +960,78 @@ abstract class Mollom {
     return $this->lastResponseCode === TRUE ? TRUE : $this->lastResponseCode;
   }
 
-  public function deleteSite($siteId) {
-    $result = $this->query('POST', 'site/' . $siteId . '/delete');
+  /**
+   * Deletes a site.
+   *
+   * @param string $publicKey
+   *   The public Mollom API key of the site to delete.
+   *
+   * @return bool
+   *   TRUE on success, FALSE otherwise.
+   */
+  public function deleteSite($publicKey) {
+    $result = $this->query('POST', 'site/' . $publicKey . '/delete');
     return $this->lastResponseCode === TRUE;
   }
 
-  public function checkContent($data = array()) {
+  /**
+   * Checks user-submitted content with Mollom.
+   *
+   * @param array $data
+   *   An associative array containing any of the keys:
+   *   - id: The existing content ID of the content, if it or a variant or
+   *     revision of it has been checked before.
+   *   - postTitle: The title of the content.
+   *   - postBody: The body of the content. If the content consists of multiple
+   *     fields, concatenate them into one postBody string, separated by " \n"
+   *     (space and line-feed).
+   *   - authorName: The (real) name of the content author.
+   *   - authorUrl: The homepage/website URL of the content author.
+   *   - authorMail: The e-mail address of the content author.
+   *   - authorIp: The IP address of the content author.
+   *   - authorId: The local user ID on the client site of the content author.
+   *   - authorOpenid: An indexed array of Open IDs of the content author.
+   *   - checks: An indexed array of strings denoting the checks to perform, one
+   *     or more of: 'spam', 'quality', 'profanity', 'language', 'sentiment'.
+   *     Defaults to 'spam'.
+   *   - unsure: Integer denoting whether a "unsure" response should be allowed
+   *     (1) for the 'spam' check (which should lead to CAPTCHA) or not (0).
+   *     Defaults to 1.
+   *   - strictness: A string denoting the strictness of Mollom checks to
+   *     perform; one of 'strict', 'normal', or 'relaxed'. Defaults to 'normal'.
+   *   - rateLimit: Seconds that must have passed by for the same author to post
+   *     again. Defaults to 15.
+   *   - honeypot: The value of a client-side honeypot form element, if
+   *     non-empty.
+   *   - ttl: Time-to-live in seconds for the content. Should be set to a
+   *     reasonable small amount of seconds during form validation, until form
+   *     validation passed. Defaults to -1 (forever).
+   *
+   * @return mixed
+   *   On success, an associative array representing the full content record,
+   *   containing the additional keys:
+   *   - spamScore: A floating point value with a precision of 2, ranging
+   *     between 0.00 and 1.00; whereas 0.00 denotes 100% spam, 0.50 denotes
+   *     "unsure", and 1.00 denotes ham. Only returned if 'spam' was passed for
+   *     'checks'.
+   *   - spamClassification: The final spam classification; one of 'spam',
+   *     'unsure', or 'ham'. Only returned if 'spam' was passed for 'checks'.
+   *   - profanityScore: A floating point value with a precision of 2, ranging
+   *     between 0.00 and 1.00; whereas 0.00 denotes 0% profanity and 1.00
+   *     denotes 100% profanity. Only returned if 'profanity' was passed for
+   *     'checks'.
+   *   - qualityScore: A floating point value with a precision of 2, ranging
+   *     between 0.00 and 1.00; whereas 0.00 denotes poor quality and 1.00
+   *     high quality. Only returned if 'quality' was passed for 'checks'.
+   *   - sentimentScore: A floating point value with a precision of 2, ranging
+   *     between 0.00 and 1.00; whereas 0.00 denotes bad sentiment and 1.00
+   *     good sentiment. Only returned if 'sentiment' was passed for 'checks'.
+   *   - reason: A string denoting the reason for Mollom's classification; e.g.,
+   *     - rateLimit: Author was seen on Mollom-protected sites within the given
+   *       'rateLimit' time-frame.
+   *   On failure, the error response code returned by the server.
+   */
+  public function checkContent(array $data = array()) {
     $path = 'content';
     if (!empty($data['id'])) {
       $path .= '/' . $data['id'];
@@ -911,23 +1046,72 @@ abstract class Mollom {
     return isset($result['content']) ? $result['content'] : $result;
   }
 
-  public function getCaptcha($data = array()) {
+  /**
+   * Retrieves a CAPTCHA resource from Mollom.
+   *
+   * @param array $data
+   *   An associative array containing:
+   *   - type: A string denoting the type of CAPTCHA to create; one of 'image'
+   *     or 'audio'.
+   *   and any of the keys:
+   *   - contentId: The ID of a content resource to link the CAPTCHA to. Allows
+   *     Mollom to learn when it was unsure.
+   *   - ssl: An integer denoting whether to create a CAPTCHA URL using HTTPS
+   *     (1) or not (0). Only available for paid subscriptions.
+   *
+   * @return mixed
+   *   On success, an associative array representing the full CAPTCHA record,
+   *   containing:
+   *   - id: The ID of the CAPTCHA.
+   *   - url: The URL of the CAPTCHA.
+   *   On failure, the error response code returned by the server.
+   *
+   * @todo Rename to createCaptcha().
+   */
+  public function getCaptcha(array $data = array()) {
     if (!isset($data['type']) || !in_array($data['type'], array('image', 'audio'))) {
-      // @todo Error handling?
+      // @todo Public method should not throw a MollomException.
       throw new MollomException('Unknown CAPTCHA type.', 0, NULL, $this);
     }
     $path = 'captcha';
-    if (!empty($data['id'])) {
-      $path .= '/' . $data['id'];
-    }
     $result = $this->query('POST', $path, $data, array('captcha', 'id'));
 
     return isset($result['captcha']) ? $result['captcha'] : $result;
   }
 
-  public function checkCaptcha($data = array()) {
+  /**
+   * Checks whether a user-submitted solution for a CAPTCHA is correct.
+   *
+   * @param array $data
+   *   An associative array containing:
+   *   - id: The ID of the CAPTCHA to check.
+   *   - solution: The answer provided by the author.
+   *   and any of the keys:
+   *   - authorName: The (real) name of the content author.
+   *   - authorUrl: The homepage/website URL of the content author.
+   *   - authorMail: The e-mail address of the content author.
+   *   - authorIp: The IP address of the content author.
+   *   - authorId: The local user ID on the client site of the content author.
+   *   - authorOpenid: An indexed array of Open IDs of the content author.
+   *   - rateLimit: Seconds that must have passed by for the same author to post
+   *     again. Defaults to 15.
+   *   - honeypot: The value of a client-side honeypot form element, if
+   *     non-empty.
+   *
+   * @return mixed
+   *   On success, an associative array representing the full CAPTCHA record,
+   *   additionally containing:
+   *   - solved: Whether the provided solution was correct (1) or not (0).
+   *   - reason: A string denoting the reason for Mollom's classification; e.g.,
+   *     - rateLimit: Author was seen on Mollom-protected sites within the given
+   *       'rateLimit' time-frame.
+   *   On failure, the error response code returned by the server.
+   *
+   * @todo Rename to createCaptcha().
+   */
+  public function checkCaptcha(array $data = array()) {
     if (empty($data['id'])) {
-      // @todo Error handling?
+      // @todo Public method should not throw a MollomException.
       throw new MollomException('Missing CAPTCHA ID.', 0, NULL, $this);
     }
     $result = $this->query('POST', 'captcha/' . $data['id'], $data, array('captcha', 'id'));
@@ -936,15 +1120,30 @@ abstract class Mollom {
   }
 
   /**
-   * @todo This part of the REST API needs work. No way to report CAPTCHA sessions.
+   * Sends feedback to Mollom.
+   *
+   * @param array $data
+   *   An associative array containing:
+   *   - reason: A string denoting the reason for why the content associated
+   *     with either contentId or captchaId is being reported; one of:
+   *     - spam: The content is spam, unsolicited advertising.
+   *     - profanity: The content contains obscene, violent, profane language.
+   *     - quality: The content is of low quality.
+   *     - unwanted: The content is unwanted, taunting, off-topic.
+   *   and at least one of:
+   *   - contentId: A Mollom content ID associated with the content.
+   *   - captchaId: A Mollom CAPTCHA ID associated with the content.
+   *
+   * @return bool
+   *   TRUE if the feedback was sent successfully, FALSE otherwise.
    */
-  public function sendFeedback($data = array()) {
+  public function sendFeedback(array $data) {
     if (empty($data['contentId']) && empty($data['captchaId'])) {
-      // @todo Error handling?
+      // @todo Public method should not throw a MollomException.
       throw new MollomException('Missing resource ID.', 0, NULL, $this);
     }
     if (empty($data['reason'])) {
-      // @todo Error handling?
+      // @todo Public method should not throw a MollomException.
       throw new MollomException('Missing feedback reason.', 0, NULL, $this);
     }
     $this->query('POST', 'feedback', $data);
@@ -952,13 +1151,23 @@ abstract class Mollom {
   }
 
   /**
+   * Retrieves the blacklist for a site.
+   *
+   * @param string $publicKey
+   *   (optional) The public Mollom API key of the site to retrieve the
+   *   blacklist for. Defaults to the public key of the client.
+   *
+   * @return mixed
+   *   An array containing blacklist entries; see Mollom::getBlacklistEntry()
+   *   for details. On failure, the error response code returned by the server.
+   *
    * @todo List parameters.
    */
-  public function getBlacklist($siteId = NULL) {
-    if (!isset($siteId)) {
-      $siteId = $this->keyPublic;
+  public function getBlacklist($publicKey = NULL) {
+    if (!isset($publicKey)) {
+      $publicKey = $this->publicKey;
     }
-    $result = $this->query('GET', 'blacklist/' . $siteId, array(), array('list'));
+    $result = $this->query('GET', 'blacklist/' . $publicKey, array(), array('list'));
     // In XML, 'list' is a string when blacklist is empty.
     // @todo Move into query().
     if (isset($result['list'])) {
@@ -972,40 +1181,102 @@ abstract class Mollom {
     return $result;
   }
 
-  public function getBlacklistEntry($entryId, $siteId = NULL) {
-    if (!isset($siteId)) {
-      $siteId = $this->keyPublic;
+  /**
+   * Retrieves a blacklist entry stored for a site.
+   *
+   * @param string $entryId
+   *   The ID of the blacklist entry to retrieve.
+   * @param string $publicKey
+   *   (optional) The public Mollom API key of the site to retrieve the
+   *   blacklist entry for. Defaults to the public key of the client.
+   *
+   * @return mixed
+   *   On success, an associative array containing:
+   *   - id: The ID the of blacklist entry.
+   *   - created: A timestamp in seconds since the UNIX epoch of when the entry
+   *     was created.
+   *   - value: The blacklisted string/value.
+   *   - reason: A string denoting the reason for why the term is blacklisted;
+   *     one of 'spam', 'profanity', 'quality', or 'unwanted'. Defaults to
+   *     'unwanted'.
+   *   - context: A string denoting where the entry's value may match; one of
+   *     'allFields', 'ip', 'email', 'links', 'authorIp', 'title'. Defaults to
+   *     'allFields'.
+   *   - match: A string denoting how precise the entry's value may match; one
+   *     of 'exact' or 'contains'. Defaults to 'contains'.
+   *   - status: An integer denoting whether the entry is enabled (1) or not
+   *     (0).
+   *   - note: A custom string explaining the entry. Useful when disabling
+   *     entries in a multi-moderator scenario.
+   *   - lastMatch: A timestamp in seconds since the UNIX epoch of when the entry
+   *     was last matched in a content.
+   *   - matchCount: An integer denoting how many times the entry was matched in
+   *     content.
+   *   On failure, the error response code returned by the server.
+   */
+  public function getBlacklistEntry($entryId, $publicKey = NULL) {
+    if (!isset($publicKey)) {
+      $publicKey = $this->publicKey;
     }
-    $result = $this->query('GET', 'blacklist/' . $siteId . '/' . $entryId, array(), array('entry', 'id'));
+    $result = $this->query('GET', 'blacklist/' . $publicKey . '/' . $entryId, array(), array('entry', 'id'));
     return isset($result['entry']) ? $result['entry'] : $result;
   }
 
-  public function createBlacklistEntry($data = array(), $siteId = NULL) {
-    if (!isset($siteId)) {
-      $siteId = $this->keyPublic;
+  /**
+   * Creates a new blacklist entry for a site.
+   *
+   * @param array $data
+   *   An associative array specifying the blacklist entry to create. See return
+   *   value of Mollom::getBlacklistEntry() for details.
+   * @param string $publicKey
+   *   (optional) The public Mollom API key of the site to create the blacklist
+   *   entry for. Defaults to the public key of the client.
+   *
+   * @return mixed
+   *   On success, the full blacklist entry record of the created entry; see
+   *   Mollom::getBlacklistEntry() for details. On failure, the error response
+   *   code returned by the server.
+   *
+   * @todo Combine into saveBlacklistEntry().
+   */
+  public function createBlacklistEntry(array $data = array(), $publicKey = NULL) {
+    if (!isset($publicKey)) {
+      $publicKey = $this->publicKey;
     }
-    $result = $this->query('POST', 'blacklist/' . $siteId, $data, array('entry', 'id'));
+    $result = $this->query('POST', 'blacklist/' . $publicKey, $data, array('entry', 'id'));
     return isset($result['entry']) ? $result['entry'] : $result;
   }
 
-  public function updateBlacklistEntry($data = array(), $siteId = NULL) {
+  public function updateBlacklistEntry(array $data = array(), $publicKey = NULL) {
     if (empty($data['id'])) {
-      // @todo Error handling?
+      // @todo Public method should not throw a MollomException.
       throw new MollomException('Missing blacklist entry ID.', 0, NULL, $this);
     }
-    if (!isset($siteId)) {
-      $siteId = $this->keyPublic;
+    if (!isset($publicKey)) {
+      $publicKey = $this->publicKey;
     }
-    $result = $this->query('POST', 'blacklist/' . $siteId . '/' . $data['id'], $data, array('entry', 'id'));
+    $result = $this->query('POST', 'blacklist/' . $publicKey . '/' . $data['id'], $data, array('entry', 'id'));
 
     return isset($result['entry']) ? $result['entry'] : $result;
   }
 
-  public function deleteBlacklistEntry($entryId, $siteId = NULL) {
-    if (!isset($siteId)) {
-      $siteId = $this->keyPublic;
+  /**
+   * Deletes a blacklist entry from a site.
+   *
+   * @param string $entryId
+   *   The ID of the blacklist entry to delete.
+   * @param string $publicKey
+   *   (optional) The public Mollom API key of the site to create the blacklist
+   *   entry for. Defaults to the public key of the client.
+   *
+   * @return bool
+   *   TRUE on success, FALSE otherwise.
+   */
+  public function deleteBlacklistEntry($entryId, $publicKey = NULL) {
+    if (!isset($publicKey)) {
+      $publicKey = $this->publicKey;
     }
-    $result = $this->query('POST', 'blacklist/' . $siteId . '/' . $entryId . '/delete');
+    $result = $this->query('POST', 'blacklist/' . $publicKey . '/' . $entryId . '/delete');
     return $this->lastResponseCode === TRUE;
   }
 }
