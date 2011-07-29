@@ -860,9 +860,9 @@ abstract class Mollom {
    *     again. Defaults to 15.
    *   - honeypot: The value of a client-side honeypot form element, if
    *     non-empty.
-   *   - ttl: Time-to-live in seconds for the content. Should be set to a
-   *     reasonable small amount of seconds during form validation, until form
-   *     validation passed. Defaults to -1 (forever).
+   *   - stored: Integer denoting whether the content has been stored on the
+   *     client-side. Use 0 during form validation, 1 after successful
+   *     submission. Defaults to 1 (stored).
    *
    * @return mixed
    *   On success, an associative array representing the full content record,
@@ -1037,12 +1037,12 @@ abstract class Mollom {
    *   - created: A timestamp in seconds since the UNIX epoch of when the entry
    *     was created.
    *   - value: The blacklisted string/value.
-   *   - reason: A string denoting the reason for why the term is blacklisted;
+   *   - reason: A string denoting the reason for why the value is blacklisted;
    *     one of 'spam', 'profanity', 'quality', or 'unwanted'. Defaults to
    *     'unwanted'.
    *   - context: A string denoting where the entry's value may match; one of
-   *     'allFields', 'ip', 'email', 'links', 'authorIp', 'title'. Defaults to
-   *     'allFields'.
+   *     'allFields', 'links', 'authorName', 'authorMail', 'authorIp',
+   *     'authorIp', or 'postTitle'. Defaults to 'allFields'.
    *   - match: A string denoting how precise the entry's value may match; one
    *     of 'exact' or 'contains'. Defaults to 'contains'.
    *   - status: An integer denoting whether the entry is enabled (1) or not
