@@ -86,7 +86,15 @@ abstract class Mollom {
   public $serversInit = array('http://rest.mollom.com');
 
   /**
-   * The status code of the last response or TRUE if it succeeded.
+   * The status code of the last server response, or TRUE if the request succeeded.
+   *
+   * If not TRUE, then the value is either one of
+   * - Mollom::NETWORK_ERROR
+   * - Mollom::RESPONSE_ERROR
+   * - Mollom::AUTH_ERROR
+   * - Mollom::REFRESH_ERROR
+   * - Mollom::REDIRECT_ERROR
+   * or the actual HTTP status code returned by the server.
    *
    * @var int|bool|null
    */
@@ -321,7 +329,7 @@ abstract class Mollom {
     $expected = array('site', 'servers');
     foreach ($this->serversInit as $server) {
       try {
-        $result = $this->request('GET', $server . '/' . self::API_VERSION, $path, $data, $expected);
+        $result = $this->handleRequest('GET', $server . '/' . self::API_VERSION, $path, $data, $expected);
       }
       catch (MollomAuthenticationException $e) {
         // Bogus configuration. Stop trying, since all servers will fail.
@@ -359,6 +367,7 @@ abstract class Mollom {
    *   On success, the parsed response body. On failure, the last response code,
    *   in case it is a known one; otherwise Mollom::NETWORK_ERROR.
    *
+   * @see Mollom::handleRequest()
    * @see Mollom::request()
    */
   protected function query($method, $path, array $data = array(), array $expected = array()) {
@@ -385,7 +394,7 @@ abstract class Mollom {
     // servers in the list.
     while ($server = current($this->servers)) {
       try {
-        $result = $this->request($method, $server, $path, $data, $expected);
+        $result = $this->handleRequest($method, $server, $path, $data, $expected);
       }
       catch (MollomRefreshException $e) {
         // Prevent infinite loops.
@@ -513,7 +522,7 @@ abstract class Mollom {
   }
 
   /**
-   * Performs a HTTP request to a Mollom server.
+   * Prepares a HTTP request to a Mollom server and processes the response.
    *
    * @param string $method
    *   The HTTP method to use; i.e., 'GET', 'POST', or 'PUT'.
@@ -528,21 +537,160 @@ abstract class Mollom {
    *   (optional) An element that is expected in the response, denoted as a list
    *   of parent element keys to the element and the element key itself; e.g., a
    *   value of array('site', 'servers') expects $response['site']['servers'] to
-   *   exist in the response.
+   *   exist in the response. If the expected element does not exist, a
+   *   MollomResponseException is thrown.
+   *
+   * @return array
+   *   An associative array representing the parsed response body on success. On
+   *   any failure, a MollomException is thrown. Additionally,
+   *   Mollom::lastResponseCode is set to TRUE on success, or to the Mollom or
+   *   HTTP status code on failure.
    *
    * @throws MollomNetworkException
    * @throws MollomAuthenticationException
    * @throws MollomRedirectException
    * @throws MollomRefreshException
+   * @throws MollomResponseException
    * @throws MollomException
    *
+   * @see Mollom::lastResponseCode
    * @see Mollom::query()
    * @see Mollom::httpBuildQuery()
-   * @see Mollom::httpParseQuery()
    * @see Mollom::parseXML()
    * @see json_decode()
    */
-  abstract protected function request($method, $server, $path, array $data, array $expected = array());
+  protected function handleRequest($method, $server, $path, $data, $expected = array()) {
+    // Build the REST request path.
+    $query = NULL;
+    if (!empty($data)) {
+      $query = $this->httpBuildQuery($data);
+    }
+    $headers['Accept'] = 'application/xml, application/json;q=0.8, */*;q=0.5';
+    if ($method == 'POST') {
+      $headers['Content-Type'] = 'application/x-www-form-urlencoded';
+    }
+
+    $response = $this->request($method, $server, $path, $query, $headers);
+
+    // Determine basic error condition based on HTTP status code.
+    $response->isError = ($response->code < 200 || $response->code >= 300);
+
+    // Parse the response body string into an array.
+    $response->data = array();
+    if (isset($response->body) && isset($response->headers['content-type'])) {
+      if (strstr($response->headers['content-type'], 'application/json')) {
+        $response->data = json_decode($response->body, TRUE);
+      }
+      elseif (strstr($response->headers['content-type'], 'application/xml')) {
+        $response->elements = new SimpleXmlIterator($response->body);
+        $response->data = $this->parseXML($response->elements);
+      }
+    }
+
+    // A 'code' in the response has precedence, regardless of a possibly
+    // positive HTTP status code.
+    if (isset($response->data['code']) && $response->data['code'] != 200) {
+      $response->isError = TRUE;
+      // Replace HTTP status code with 'code' from response.
+      $response->code = (int) $response->data['code'];
+      // If there is no HTTP status message, take over 'message' from response,
+      // if any.
+      if (!isset($response->message) && isset($response->data['message'])) {
+        $response->message = $response->data['message'];
+      }
+    }
+
+    // Verify that an expected element exists in the response.
+    // A response validation like this would normally be done using XML DTDs,
+    // so the XML parser would already (in)validate the response. However, there
+    // is no equivalent to a DTD/schema in JSON. Since implementing dedicated
+    // response classes for each resource would be over-engineering for the
+    // average use-case, we check for a particular element in the response only.
+    if (!$response->isError && !empty($response->data) && !empty($expected)) {
+      $key_exists = FALSE;
+      if (is_array($response->data)) {
+        $key_exists = $this->arrayKeyExists($response->data, $expected);
+      }
+      if (!$key_exists) {
+        $response->isError = TRUE;
+        $response->code = self::RESPONSE_ERROR;
+        $response->message = 'Unexpected server response.';
+      }
+    }
+
+    if ($response->isError) {
+      $arguments = array(
+        'request' => $method . ' ' . $server . '/' . $path,
+        'data' => $data,
+        'response' => !empty($response->data) ? $response->data : $response->body,
+      );
+      if ($response->code <= 0) {
+        throw new MollomNetworkException(t('Network error.'), self::NETWORK_ERROR, NULL, $this, $arguments);
+      }
+      if ($response->code == self::AUTH_ERROR || $response->code == 401) {
+        throw new MollomAuthenticationException(t('Invalid authentication.'), self::AUTH_ERROR, NULL, $this, $arguments);
+      }
+      if ($response->code == self::REDIRECT_ERROR || ($response->code >= 300 && $response->code < 400)) {
+        throw new MollomRedirectException(t('Server redirected to next.'), self::REDIRECT_ERROR, NULL, $this, $arguments);
+      }
+      if ($response->code == self::REFRESH_ERROR) {
+        throw new MollomRefreshException(t('Refresh of server list required.'), self::REFRESH_ERROR, NULL, $this, $arguments);
+      }
+      if ($response->code == self::RESPONSE_ERROR || $response->code >= 500) {
+        throw new MollomResponseException($response->message, self::RESPONSE_ERROR, NULL, $this, $arguments);
+      }
+      throw new MollomException($response->message, $response->code, NULL, $this, $arguments);
+    }
+    else {
+      $this->lastResponseCode = TRUE;
+      $this->log[] = array(
+        'severity' => 'debug',
+        'message' => '@code @method @uri',
+        'arguments' => array(
+          '@code' => $response->code,
+          '@method' => $method,
+          '@uri' => $path,
+        ),
+        'request' => $method . ' ' . $server . '/' . $path,
+        'data' => $data,
+        'response' => $response->data,
+      );
+
+      return $response->data;
+    }
+  }
+
+  /**
+   * Performs a HTTP request to a Mollom server.
+   *
+   * @param string $method
+   *   The HTTP method to use; i.e., 'GET', 'POST', or 'PUT'.
+   * @param string $server
+   *   The base URL of the server to perform the request against; e.g.,
+   *   'http://foo.mollom.com'.
+   * @param string $path
+   *   The REST path/resource to request; e.g., 'site/1a2b3c'.
+   * @param string $query
+   *   (optional) A prepared string of HTTP query parameters to append to $path
+   *   for $method GET, or to use as request body for $method POST.
+   * @param array $headers
+   *   (optional) An associative array of HTTP request headers to send along
+   *   with the request.
+   *
+   * @return object
+   *   An object containing response properties:
+   *   - code: The HTTP status code as integer returned by the Mollom server.
+   *   - message: The HTTP status message string returned by the Mollom server,
+   *     or NULL if there is no message.
+   *   - headers: An associative array containing the HTTP response headers
+   *     returned by the Mollom server. Header name keys are expected to be
+   *     lower-case; i.e., "content-type" instead of "Content-Type".
+   *   - body: The HTTP response body string returned by the Mollom server, or
+   *     NULL if there is none.
+   *
+   * @see Mollom::handleRequest()
+   */
+  abstract protected function request($method, $server, $path, $query = NULL, array $headers = array());
 
   /**
    * Converts a SimpleXMLIterator structure into an associative array.
