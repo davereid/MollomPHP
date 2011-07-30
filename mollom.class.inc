@@ -101,6 +101,27 @@ abstract class Mollom {
   public $lastResponseCode = NULL;
 
   /**
+   * The amount of items contained in a list response.
+   *
+   * @var int
+   */
+  public $listCount = NULL;
+
+  /**
+   * The current offset of a list response.
+   *
+   * @var int
+   */
+  public $listOffset = 0;
+
+  /**
+   * The total amount of items contained in a list response.
+   *
+   * @var int
+   */
+  public $listTotal = NULL;
+
+  /**
    * A list of logged requests.
    *
    * @var array
@@ -371,6 +392,11 @@ abstract class Mollom {
    * @see Mollom::request()
    */
   protected function query($method, $path, array $data = array(), array $expected = array()) {
+    // Reset list response properties.
+    $this->listCount = NULL;
+    $this->listOffset = 0;
+    $this->listTotal = NULL;
+
     // Retrieve server list.
     // If we get no list, we will have no servers to iterate over and only the
     // error logic remains.
@@ -484,8 +510,11 @@ abstract class Mollom {
     // request succeeded, return the result to the caller.
     if (isset($result) && $this->lastResponseCode === TRUE) {
       // Generically handle the special case of 'list' responses.
-      // @todo Add handling for list meta response parameters.
       if (isset($result['list']) && is_array($result)) {
+        // Assign list meta properties to corresponding class properties.
+        $this->listCount = (int) $result['listCount'];
+        $this->listOffset = (int) $result['listOffset'];
+        $this->listTotal = (int) $result['listTotal'];
         // If there is only one item, parseXML() is not able to detect it as a
         // list and will return a named key for the value. Ensure an indexed
         // array is returned.
