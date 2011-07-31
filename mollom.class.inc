@@ -976,15 +976,38 @@ abstract class Mollom {
   }
 
   /**
+   * Updates a site.
+   *
+   * @param array $data
+   *   An associative array of properties to set for the site. See
+   *   Mollom::getSite() for details.
+   * @param string $publicKey
+   *   (optional) The public Mollom API key of the site to update. Defaults to
+   *   the public key of the client.
+   *
+   * @return mixed
+   *   On success, the full site information of the created site; see
+   *   Mollom::getSite() for details. On failure, the error response code
+   *   returned by the server.
+   */
+  public function updateSite(array $data = array(), $publicKey = NULL) {
+    if (!isset($publicKey)) {
+      $publicKey = $this->publicKey;
+    }
+    $result = $this->query('POST', 'site/' . $this->publicKey, $data, array('site'));
+    return isset($result['site']) ? $result['site'] : $result;
+  }
+
+  /**
    * Updates a site to verify API keys and send client information.
    *
    * @return mixed
    *   TRUE on success. On failure, the error response code returned by the
-   *   server; one of Mollom::AUTH_ERROR or Mollom::NETWORK_ERROR.
+   *   server; either Mollom::AUTH_ERROR or Mollom::NETWORK_ERROR.
    */
-  public function verifyKey() {
+  public function verifyKeys() {
     $data = $this->getClientInformation();
-    $result = $this->query('POST', 'site/' . $this->publicKey, $data, array('site'));
+    $result = $this->updateSite($data);
     // If the public key could not be found, make sure to return an
     // authentication error.
     if ($this->lastResponseCode === 404) {
@@ -1037,9 +1060,16 @@ abstract class Mollom {
    *     again. Defaults to 15.
    *   - honeypot: The value of a client-side honeypot form element, if
    *     non-empty.
-   *   - stored: Integer denoting whether the content has been stored on the
-   *     client-side. Use 0 during form validation, 1 after successful
-   *     submission. Defaults to 1 (stored).
+   *   - stored: Integer denoting whether the content has been stored (1) on the
+   *     client-side or not (0). Use 0 during form validation, 1 after
+   *     successful submission. Defaults to 0.
+   *   - url: The absolute URL to the stored content.
+   *   - contextUrl: An absolute URL to parent/context content of the stored
+   *     content; e.g., the URL of the article or forum thread a comment is
+   *     posted on (not the parent comment that was replied to).
+   *   - contextTitle: The title of the parent/context content of the stored
+   *     content; e.g., the title of the article or forum thread a comment is
+   *     posted on (not the parent comment that was replied to).
    *
    * @return mixed
    *   On success, an associative array representing the full content record,
@@ -1224,12 +1254,8 @@ abstract class Mollom {
    *     of 'exact' or 'contains'. Defaults to 'contains'.
    *   - status: An integer denoting whether the entry is enabled (1) or not
    *     (0).
-   *   - note: A custom string explaining the entry. Useful when disabling
-   *     entries in a multi-moderator scenario.
-   *   - lastMatch: A timestamp in seconds since the UNIX epoch of when the entry
-   *     was last matched in a content.
-   *   - matchCount: An integer denoting how many times the entry was matched in
-   *     content.
+   *   - note: A custom string explaining the entry. Useful in a multi-moderator
+   *     scenario.
    *   On failure, the error response code returned by the server.
    */
   public function getBlacklistEntry($entryId, $publicKey = NULL) {
