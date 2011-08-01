@@ -70,11 +70,23 @@ abstract class Mollom {
   public $privateKey = '';
 
   /**
+   * OAuth protocol parameter strategy to use.
+   *
+   * Either 'header' for HTTP headers (preferred), or 'query' for GET/POST
+   * request parameters.
+   *
+   * @see Mollom::addAuthentication()
+   *
+   * @var string
+   */
+  public $oAuthStrategy = 'header';
+
+  /**
    * The list of Mollom servers to communicate with, as returned by Mollom.
    *
-   * @var array
-   *
    * @see Mollom::getServers()
+   *
+   * @var array
    */
   public $servers = array();
 
@@ -83,7 +95,7 @@ abstract class Mollom {
    *
    * @var array
    */
-  public $serversInit = array('http://rest.mollom.com');
+  public $serversInit = array('http://rest.mollom.com/MollomCore/rest');
 
   /**
    * The status code of the last server response, or TRUE if the request succeeded.
@@ -220,67 +232,6 @@ abstract class Mollom {
   }
 
   /**
-   * Returns the current request time as UNIX timestamp.
-   *
-   * @return integer
-   */
-  public function getRequestTime() {
-    return $_SERVER['REQUEST_TIME'];
-  }
-
-  /**
-   * Generates authentication parameters for communication with Mollom servers.
-   *
-   * This function generates an array with all information required to
-   * authenticate against Mollom. To prevent forged requests where you are
-   * impersonated, each request is signed with a hash based on a private
-   * key and a timestamp.
-   *
-   * Both the client and the server share the secret key used to create
-   * the authentication hash. They both hash a timestamp with the secret
-   * key, and if the hashes match, the authenticity of the message is
-   * validated.
-   *
-   * To avoid someone intercepting a (hash, timestamp)-pair and using it
-   * to impersonate a client, Mollom rejects any request where the timestamp
-   * is more than 15 minutes off.
-   *
-   * Make sure your server's time is synchronized with the world clocks,
-   * and that you don't share your private key with anyone else.
-   *
-   * @return array
-   *   An associative array containing HMAC authentication request parameters
-   *   to be sent to Mollom.
-   *
-   * @throws MollomAuthenticationException
-   */
-  public function getAuthentication() {
-    if (empty($this->publicKey) || empty($this->privateKey)) {
-      throw new MollomAuthenticationException('Missing API keys.', self::AUTH_ERROR, NULL, $this);
-    }
-
-    // Generate a timestamp according to the dateTime format.
-    // @see http://www.w3.org/TR/xmlschema-2/#dateTime
-    $time = gmdate("Y-m-d\TH:i:s.\\0\\0\\0O", $this->getRequestTime());
-
-    // Generate a random number.
-    $nonce = md5(mt_rand());
-
-    // Calculate a HMAC-SHA1 according to RFC 2104.
-    // @see http://www.ietf.org/rfc/rfc2104.txt
-    $request_data = $time . ':' . $nonce . ':' . $this->privateKey;
-    $hash = base64_encode(hash_hmac('sha1', $request_data, $this->privateKey, TRUE));
-
-    // Return HMAC authentication parameters as a keyed array.
-    $data['publicKey'] = $this->publicKey;
-    $data['time'] = $time;
-    $data['hash'] = $hash;
-    $data['nonce'] = $nonce;
-
-    return $data;
-  }
-
-  /**
    * Fetches Mollom servers from local configuration or retrieves a new list.
    *
    * @return
@@ -339,10 +290,7 @@ abstract class Mollom {
     // list. We only ever abort, if we get an AUTH_ERROR, in which case there
     // is a configuration error (i.e., invalid API keys).
     $servers = array();
-    try {
-      $data = $this->getAuthentication();
-    }
-    catch (MollomAuthenticationException $e) {
+    if (empty($this->publicKey) || empty($this->privateKey)) {
       return $servers;
     }
 
@@ -350,7 +298,7 @@ abstract class Mollom {
     $expected = array('site', 'servers');
     foreach ($this->serversInit as $server) {
       try {
-        $result = $this->handleRequest('GET', $server . '/' . self::API_VERSION, $path, $data, $expected);
+        $result = $this->handleRequest('GET', $server, $path, array(), $expected);
       }
       catch (MollomAuthenticationException $e) {
         // Bogus configuration. Stop trying, since all servers will fail.
@@ -401,18 +349,6 @@ abstract class Mollom {
     // If we get no list, we will have no servers to iterate over and only the
     // error logic remains.
     $this->getServers();
-
-    // Unconditionally add HMAC request authentication parameters.
-    try {
-      $data += $this->getAuthentication();
-    }
-    catch (MollomAuthenticationException $e) {
-      // MollomAuthenticationException sets the appropriate error code. Merely
-      // catch the exception, move on to error logic below.
-      // Prevent any requests from being performed in case we have servers
-      // loaded from configuration or due to some other edge-case (scripting).
-      $this->servers = array();
-    }
 
     // Initialize refresh variable.
     $refresh = FALSE;
@@ -554,7 +490,7 @@ abstract class Mollom {
    * Prepares a HTTP request to a Mollom server and processes the response.
    *
    * @param string $method
-   *   The HTTP method to use; i.e., 'GET', 'POST', or 'PUT'.
+   *   The HTTP method to use; i.e., 'GET' or 'POST'.
    * @param string $server
    *   The base URL of the server to perform the request against; e.g.,
    *   'http://foo.mollom.com'.
@@ -589,20 +525,28 @@ abstract class Mollom {
    * @see json_decode()
    */
   protected function handleRequest($method, $server, $path, $data, $expected = array()) {
-    // Build the REST request path.
-    $query = NULL;
-    if (!empty($data)) {
-      $query = $this->httpBuildQuery($data);
-    }
-    $headers['Accept'] = 'application/xml, application/json;q=0.8, */*;q=0.5';
-    if ($method == 'POST') {
-      $headers['Content-Type'] = 'application/x-www-form-urlencoded';
-    }
+    if (!empty($this->publicKey) && !empty($this->privateKey)) {
+      $headers['Accept'] = 'application/xml, application/json;q=0.8, */*;q=0.5';
+      if ($method == 'POST') {
+        $headers['Content-Type'] = 'application/x-www-form-urlencoded';
+      }
 
-    $response = $this->request($method, $server, $path, $query, $headers);
+      // Add OAuth request parameters.
+      $query = $this->addAuthentication($method, $server, $path, $data, $headers);
 
-    // Determine basic error condition based on HTTP status code.
-    $response->isError = ($response->code < 200 || $response->code >= 300);
+      $response = $this->request($method, $server, $path, $query, $headers);
+
+      // Determine basic error condition based on HTTP status code.
+      $response->isError = ($response->code < 200 || $response->code >= 300);
+    }
+    else {
+      $headers = array();
+      $response = new stdClass;
+      $response->code = self::AUTH_ERROR;
+      $response->message = 'Missing API keys.';
+      $response->isError = TRUE;
+      $response->body = NULL;
+    }
 
     // Parse the response body string into an array.
     $response->data = array();
@@ -650,6 +594,7 @@ abstract class Mollom {
     if ($response->isError) {
       $arguments = array(
         'request' => $method . ' ' . $server . '/' . $path,
+        'headers' => $headers,
         'data' => $data,
         'response' => !empty($response->data) ? $response->data : $response->body,
       );
@@ -681,12 +626,126 @@ abstract class Mollom {
           '@uri' => $path,
         ),
         'request' => $method . ' ' . $server . '/' . $path,
+        'headers' => $headers,
         'data' => $data,
         'response' => $response->data,
       );
 
       return $response->data;
     }
+  }
+
+  /**
+   * Returns GET/POST request parameters after adding 2-legged OAuth authentication parameters.
+   *
+   * All available OAuth libraries for PHP are needlessly over-engineered,
+   * poorly written and maintained, contain code for server implementations, and
+   * would be mostly overhead for the simple purpose of 2-legged authentication.
+   * Therefore, this simple function implements OAuth request signing based on
+   * latest RFC 5849, using the public API key as client/consumer key and the
+   * private API key as client secret.
+   *
+   * Make sure that your server time is synchronized with the world clocks, and
+   * that you do not share your private key with anyone else.
+   *
+   * @param string $method
+   *   The HTTP method to use; i.e., 'GET' or 'POST'.
+   * @param string $server
+   *   The base URL of the server to perform the request against; e.g.,
+   *   'http://foo.mollom.com'.
+   * @param string $path
+   *   The REST path/resource to request; e.g., 'site/1a2b3c'.
+   * @param array $data
+   *   An associative array of query parameters to send with the request. Passed
+   *   by reference.
+   * @param array $headers
+   *   An associative array of HTTP request headers to send along with the
+   *   request. Passed by reference.
+   *
+   * @return string
+   *   A string containing encoded request parameters derived of $data to use as
+   *   GET query string or POST body data.
+   *
+   * @see http://tools.ietf.org/html/rfc5849
+   * @see Mollom::oAuthStrategy
+   */
+  protected function addAuthentication($method, $server, $path, &$data, &$headers) {
+    $oauth['oauth_consumer_key'] = $this->publicKey;
+    $oauth['oauth_version'] = '1.0';
+    // Random string; must be unique across all requests with the same
+    // timestamp, client credentials, and token combinations. (3.3)
+    $oauth['oauth_nonce'] = md5(microtime() . mt_rand());
+    // Number of seconds since January 1, 1970 00:00:00 GMT. (3.3)
+    $oauth['oauth_timestamp'] = time();
+    $oauth['oauth_signature_method'] = 'HMAC-SHA1';
+
+    // Prepare the request query parameters to return (and pass on to request())
+    // and the query parameters to include in the OAuth signature base string.
+    // Note that Mollom::httpBuildQuery() sorts parameters already.
+    if ($this->oAuthStrategy == 'header') {
+      $query = $this->httpBuildQuery($data);
+      $oauth_query = $this->httpBuildQuery($oauth + $data);
+    }
+    elseif ($this->oAuthStrategy == 'query') {
+      $data += $oauth;
+      $oauth_query = $query = $this->httpBuildQuery($data);
+    }
+    // Skip authentication entirely; required to create testing site record when
+    // running tests.
+    else {
+      $query = $this->httpBuildQuery($data);
+      $oauth_query = '';
+    }
+
+    // Generate the signature. (3.4.1)
+    // Base string to sign is compound of
+    // - uppercase HTTP method
+    // - rawurlencoded lowercase server URI (without default ports 80/443),
+    //   including path in natural case
+    // - encoded, sorted, and lastly (double-)rawurlencoded request parameters,
+    //   having GET query parameters first, and POST body data parameters last
+    //   (if any)
+    // delimited by "&". (3.4.1.1)
+    $base_string = implode('&', array(
+      $method,
+      self::rawurlencode($server . '/' . $path),
+      self::rawurlencode($oauth_query),
+    ));
+    // Key is unconditionally compound of client secret and token secret, even
+    // if empty. (3.4.2)
+    $key = self::rawurlencode($this->privateKey) . '&' . '';
+    $oauth['oauth_signature'] = base64_encode(hash_hmac('sha1', $base_string, $key, TRUE));
+
+    // Add the OAuth protocol parameters as HTTP header, or append the signature
+    // to query parameters.
+    if ($this->oAuthStrategy == 'header') {
+      foreach ($oauth as $key => $value) {
+        $oauth[$key] = $key . '="' . self::rawurlencode($value) . '"';
+      }
+      // Header parameters are joined and delimited by comma. (3.5.1)
+      $headers['Authorization'] = 'OAuth ' . implode(',', $oauth);
+    }
+    elseif ($this->oAuthStrategy == 'query') {
+      $oauth['oauth_signature'] = rawurlencode($oauth['oauth_signature']);
+      $data['oauth_signature'] = $oauth['oauth_signature'];
+      $query .= '&oauth_signature=' . $oauth['oauth_signature'];
+    }
+
+    return $query;
+  }
+
+  /**
+   * Encodes a URL compliant with OAuth RFC 5849.
+   *
+   * @param string $value
+   *   The URL string to be encoded.
+   *
+   * @return string
+   *   The rawurlencode()d URL, containing string literals for "~" (tildes) and
+   *   " " (spaces). (RFC 5849 3.4.1.3.1 and 3.6)
+   */
+  public static function rawurlencode($value) {
+    return strtr(rawurlencode($value), array('%7E' => '~', '+' => ' '));
   }
 
   /**
@@ -846,15 +905,20 @@ abstract class Mollom {
       if (is_array($value)) {
         $params[] = self::httpBuildQuery($value, $key);
       }
-      // If a query parameter value is NULL, only append its key.
+      // If a query parameter value is NULL, only append its key, followed by
+      // "=" (3.4.1.3.2).
       elseif (!isset($value)) {
-        $params[] = $key;
+        $params[] = $key . '=';
       }
       else {
-        // For better readability of paths in query strings, we decode slashes.
-        $params[] = $key . '=' . str_replace('%2F', '/', rawurlencode($value));
+        $params[] = $key . '=' . rawurlencode($value);
       }
     }
+
+    // Parameters are sorted by name, using ascending byte value ordering. If
+    // two or more parameters share the same name, they are sorted by their
+    // value. (3.4.1.3.2)
+    sort($params, SORT_STRING);
 
     return implode('&', $params);
   }
@@ -1390,11 +1454,7 @@ class MollomException extends Exception {
     );
     // Add HTTP request information, if available.
     if (!empty($arguments)) {
-      $message += array(
-        'request' => $arguments['request'],
-        'data' => $arguments['data'],
-        'response' => $arguments['response'],
-      );
+      $message += $arguments;
     }
     $mollom->log[] = $message;
   }
