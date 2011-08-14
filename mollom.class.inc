@@ -573,18 +573,20 @@ abstract class Mollom {
       }
     }
 
-    // Verify that an expected element exists in the response.
-    // A response validation like this would normally be done using XML DTDs,
-    // so the XML parser would already (in)validate the response. However, there
-    // is no equivalent to a DTD/schema in JSON. Since implementing dedicated
-    // response classes for each resource would be over-engineering for the
-    // average use-case, we check for a particular element in the response only.
+    // Verify that the expected (parent) element exists in the response.
+    // There is no notion of DTD/schema in JSON. A dedicated class for each
+    // response would be a large overhead. Therefore, response validation is
+    // limited to checking for one expected element (in a nested array of
+    // variable depth).
     if (!$response->isError && !empty($response->data) && !empty($expected)) {
-      $key_exists = FALSE;
-      if (is_array($response->data)) {
-        $key_exists = $this->arrayKeyExists($response->data, $expected);
+      $ref = &$response->data;
+      $parent = reset($expected);
+      while ($parent !== FALSE && is_array($ref) && array_key_exists($parent, $ref)) {
+        $ref = &$ref[$parent];
+        $parent = next($expected);
       }
-      if (!$key_exists) {
+      // Only if $parent is FALSE we have reached the last expected key.
+      if ($parent !== FALSE) {
         $response->isError = TRUE;
         $response->code = self::RESPONSE_ERROR;
         $response->message = 'Unexpected server response.';
@@ -611,7 +613,7 @@ abstract class Mollom {
         throw new MollomRefreshException(t('Refresh of server list required.'), self::REFRESH_ERROR, NULL, $this, $arguments);
       }
       if ($response->code == self::RESPONSE_ERROR || $response->code >= 500) {
-        throw new MollomResponseException($response->message, self::RESPONSE_ERROR, NULL, $this, $arguments);
+        throw new MollomResponseException($response->message, $response->code, NULL, $this, $arguments);
       }
       throw new MollomException($response->message, $response->code, NULL, $this, $arguments);
     }
@@ -836,32 +838,6 @@ abstract class Mollom {
       unset($a[$key]);
     }
     return $a;
-  }
-
-  /**
-   * Determines whether a nested array with variable depth contains all of the requested keys.
-   *
-   * @param array $array
-   *   The array with variable depth that may contain the value to check for.
-   * @param array $expected
-   *   A list of parent keys of the value, starting with the outermost key.
-   *
-   * @return bool
-   *   TRUE if all the parent keys exist, FALSE otherwise.
-   *
-   * @see Mollom::request()
-   */
-  public static function arrayKeyExists(array $array, array $expected) {
-    $ref = &$array;
-    foreach ($expected as $parent) {
-      if (is_array($ref) && array_key_exists($parent, $ref)) {
-        $ref = &$ref[$parent];
-      }
-      else {
-        return FALSE;
-      }
-    }
-    return TRUE;
   }
 
   /**
@@ -1383,17 +1359,17 @@ abstract class Mollom {
  * A catchable Mollom exception.
  *
  * The Mollom class internally uses exceptions to handle client-side server
- * balancing and eventually HTTP request errors within the Mollom::request()
+ * balancing and eventually HTTP request errors within the Mollom::handleRequest()
  * method. All exceptions thrown in the Mollom class and derived classes should
  * be instances of the MollomException class if they pertain to errors that can
  * be catched/handled within the class. Other errors should not use the
  * MollomException class and handled differently.
  *
  * No MollomException is supposed to pile up as a user-facing fatal error. All
- * functions that invoke Mollom::request() have to catch Mollom exceptions.
+ * functions that invoke Mollom::handleRequest() have to catch Mollom exceptions.
  *
  * @see Mollom::query()
- * @see Mollom::request()
+ * @see Mollom::handleRequest()
  *
  * @param $message
  *   The Exception message to throw.
@@ -1505,7 +1481,7 @@ class MollomRedirectException extends MollomException {
  * contain an expected element; e.g., a backend configuration or execution
  * error that possibly exists on one server only.
  *
- * @see Mollom::request()
+ * @see Mollom::handleRequest()
  */
 class MollomResponseException extends MollomException {
   protected $severity = 'debug';
