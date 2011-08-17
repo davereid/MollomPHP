@@ -95,7 +95,7 @@ abstract class Mollom {
    *
    * @var array
    */
-  public $serversInit = array('http://rest.mollom.com/MollomCore/rest');
+  public $serversInit = array('http://rest.mollom.com/v1');
 
   /**
    * The status code of the last server response, or TRUE if the request succeeded.
