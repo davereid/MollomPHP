@@ -1018,6 +1018,10 @@ abstract class Mollom {
   /**
    * Updates a site.
    *
+   * Note that most Mollom clients want to use Mollom::verifyKeys() only. This
+   * method is primarily used by Mollom resellers, who are provisioning sites
+   * and may need to set other site properties.
+   *
    * @param array $data
    *   An associative array of properties to set for the site. See
    *   Mollom::getSite() for details.
