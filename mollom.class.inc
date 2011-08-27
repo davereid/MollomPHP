@@ -309,7 +309,9 @@ abstract class Mollom {
         continue;
       }
 
-      if (isset($result) && $this->lastResponseCode === TRUE) {
+      // Otherwise, we should have a result. Since the server list value is
+      // crucial and processed elsewhere, ensure that it is a non-empty array.
+      if ($this->lastResponseCode === TRUE && !empty($result['site']['servers']) && is_array($result['site']['servers'])) {
         $servers = $result['site']['servers'];
         break;
       }
