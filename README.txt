@@ -73,6 +73,8 @@ To submit bug reports and feature suggestions, or to track changes:
 
 -- LICENSE --
 
-The Mollom class is released under the GNU General Public License, Version 2.
-See LICENSE.txt.
+You may use this software under the terms of either the MIT License or the
+GNU General Public License (GPL), Version 2.
+
+See LICENSE-MIT.txt and LICENSE-GPL.txt.
 
