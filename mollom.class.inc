@@ -1047,6 +1047,11 @@ abstract class Mollom {
   /**
    * Updates a site to verify API keys and send client information.
    *
+   * Mollom API keys are validated in all API calls already. This method should
+   * be used when the API keys of a Mollom client are configured for a site. It
+   * should be invoked at least once for a site, to send client and version
+   * information to Mollom in order to aid with Mollom support requests.
+   *
    * @return mixed
    *   TRUE on success. On failure, the error response code returned by the
    *   server; either Mollom::AUTH_ERROR or Mollom::NETWORK_ERROR.
