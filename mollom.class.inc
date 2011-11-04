@@ -603,16 +603,16 @@ abstract class Mollom {
         'response' => !empty($response->data) ? $response->data : $response->body,
       );
       if ($response->code <= 0) {
-        throw new MollomNetworkException(t('Network error.'), self::NETWORK_ERROR, NULL, $this, $arguments);
+        throw new MollomNetworkException('Network error.', self::NETWORK_ERROR, NULL, $this, $arguments);
       }
       if ($response->code == self::AUTH_ERROR || $response->code == 401) {
-        throw new MollomAuthenticationException(t('Invalid authentication.'), self::AUTH_ERROR, NULL, $this, $arguments);
+        throw new MollomAuthenticationException('Invalid authentication.', self::AUTH_ERROR, NULL, $this, $arguments);
       }
       if ($response->code == self::REDIRECT_ERROR || ($response->code >= 300 && $response->code < 400)) {
-        throw new MollomRedirectException(t('Server redirected to next.'), self::REDIRECT_ERROR, NULL, $this, $arguments);
+        throw new MollomRedirectException('Server redirected to next.', self::REDIRECT_ERROR, NULL, $this, $arguments);
       }
       if ($response->code == self::REFRESH_ERROR) {
-        throw new MollomRefreshException(t('Refresh of server list required.'), self::REFRESH_ERROR, NULL, $this, $arguments);
+        throw new MollomRefreshException('Refresh of server list required.', self::REFRESH_ERROR, NULL, $this, $arguments);
       }
       if ($response->code == self::RESPONSE_ERROR || $response->code >= 500) {
         throw new MollomResponseException($response->message, $response->code, NULL, $this, $arguments);
