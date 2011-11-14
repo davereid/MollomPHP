@@ -95,7 +95,7 @@ abstract class Mollom {
    *
    * @var array
    */
-  public $serversInit = array('http://rest.mollom.com/v1');
+  public $serversInit = array('http://rest.mollom.com');
 
   /**
    * The status code of the last server response, or TRUE if the request succeeded.
@@ -533,6 +533,8 @@ abstract class Mollom {
         $headers['Content-Type'] = 'application/x-www-form-urlencoded';
       }
 
+      // Append API version to REST endpoint.
+      $server .=  '/' . self::API_VERSION;
       // Add OAuth request parameters.
       $query = $this->addAuthentication($method, $server, $path, $data, $headers);
 
