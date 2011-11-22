@@ -4,7 +4,8 @@
  * @file
  * Mollom client class.
  *
- * @license http://www.gnu.org/licenses/old-licenses/gpl-2.0.html GNU GPL v2
+ * @license MIT|GNU GPL v2
+ *   See LICENSE-MIT.txt or LICENSE-GPL.txt shipped with this library.
  */
 
 /**
