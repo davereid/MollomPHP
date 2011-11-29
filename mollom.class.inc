@@ -954,6 +954,34 @@ abstract class Mollom {
     return $result;
   }
 
+  public static function getServerParameters() {
+    if ($_SERVER['REQUEST_METHOD'] == 'GET' || $_SERVER['REQUEST_METHOD'] == 'HEAD') {
+      $data = self::httpParseQuery($_SERVER['QUERY_STRING']);
+    }
+    elseif ($_SERVER['REQUEST_METHOD'] == 'POST' || $_SERVER['REQUEST_METHOD'] == 'PUT') {
+      $data = self::httpParseQuery(file_get_contents('php://input'));
+    }
+    return $data;
+  }
+
+  public static function getServerAuthentication() {
+    $header = array();
+    if (function_exists('apache_request_headers')) {
+      $headers = apache_request_headers();
+      if (isset($headers['Authorization'])) {
+        $input = $headers['Authorization'];
+      }
+    }
+    elseif (isset($_SERVER['HTTP_AUTHORIZATION'])) {
+      $input = $_SERVER['HTTP_AUTHORIZATION'];
+    }
+    if (isset($input)) {
+      preg_match_all('@([^, =]+)="([^"]*)"@', $input, $header);
+      $header = array_combine($header[1], $header[2]);
+    }
+    return $header;
+  }
+
   /**
    * Retrieves a list of sites accessible to this client.
    *
