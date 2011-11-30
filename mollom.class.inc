@@ -1181,6 +1181,7 @@ abstract class Mollom {
     $path = 'content';
     if (!empty($data['id'])) {
       $path .= '/' . $data['id'];
+      unset($data['id']);
     }
     $result = $this->query('POST', $path, $data, array('content', 'id'));
 
@@ -1256,7 +1257,9 @@ abstract class Mollom {
     if (empty($data['id'])) {
       return FALSE;
     }
-    $result = $this->query('POST', 'captcha/' . $data['id'], $data, array('captcha', 'id'));
+    $path = 'captcha/' . $data['id'];
+    unset($data['id']);
+    $result = $this->query('POST', $path, $data, array('captcha', 'id'));
 
     return isset($result['captcha']) ? $result['captcha'] : $result;
   }
@@ -1371,6 +1374,7 @@ abstract class Mollom {
     $path = 'blacklist/' . $publicKey;
     if (!empty($data['id'])) {
       $path .= '/' . $data['id'];
+      unset($data['id']);
     }
     $result = $this->query('POST', $path, $data, array('entry', 'id'));
     return isset($result['entry']) ? $result['entry'] : $result;
