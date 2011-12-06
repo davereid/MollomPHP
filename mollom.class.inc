@@ -135,6 +135,13 @@ abstract class Mollom {
   public $listTotal = NULL;
 
   /**
+   * Flag indicating whether to invoke Mollom::writeLog() in Mollom::query().
+   *
+   * @var bool
+   */
+  public $writeLog = TRUE;
+
+  /**
    * A list of logged requests.
    *
    * @var array
@@ -256,7 +263,7 @@ abstract class Mollom {
           $this->saveConfiguration('servers', $this->servers);
           $this->log[] = array(
             'severity' => 'debug',
-            'message' => 'Refreshed servers: %servers',
+            'message' => 'New server list: %servers',
             'arguments' => array(
               '%servers' => implode(', ', $this->servers),
             ),
@@ -366,7 +373,15 @@ abstract class Mollom {
         if (!$refresh) {
           $refresh = TRUE;
 
-          // In any case, the current server list is no longer valid.
+          $this->log[] = array(
+            'severity' => 'debug',
+            'message' => 'Emptied server list: %servers',
+            'arguments' => array(
+              '%servers' => implode(', ', $this->servers),
+            ),
+          );
+
+          // Forget about the current server list; it is no longer valid.
           $this->servers = array();
           $this->deleteConfiguration('servers');
 
@@ -374,8 +389,8 @@ abstract class Mollom {
           $this->servers = $this->getServers();
           // If API keys are invalid, we won't be able to get a new server list.
           // To reach this, we must have had a server list (and therefore
-          // valid keys) before, so we do not immediately return, but trigger
-          // the fallback mode instead.
+          // valid keys) before. Trying other servers is pointless, so skip to
+          // error handling.
           if (empty($this->servers)) {
             break;
           }
@@ -422,16 +437,20 @@ abstract class Mollom {
     // In case all servers failed, reset the server list to enforce retrieval of
     // a new list the next time.
     if (current($this->servers) === FALSE) {
-      $this->servers = array();
-      $this->deleteConfiguration('servers');
-
-      $this->log[] = array(
-        'severity' => 'error',
-        'message' => 'All servers unreachable or returning errors. The server list was emptied: %servers',
-        'arguments' => array(
-          '%servers' => implode(', ', $this->servers ? $this->servers : $this->serversInit),
-        ),
-      );
+      // Only log this error and empty the server list if there was one in the
+      // first place. If there was none, we attempted to talk to initial servers
+      // (to retrieve a server list).
+      if ($this->servers) {
+        $this->log[] = array(
+          'severity' => 'error',
+          'message' => 'All servers unreachable or returning errors. The server list was emptied: %servers',
+          'arguments' => array(
+            '%servers' => implode(', ', $this->servers),
+          ),
+        );
+        $this->servers = array();
+        $this->deleteConfiguration('servers');
+      }
     }
     // Otherwise, make sure to use the last server we communicated with as the
     // first/default server for subsequent requests of this Mollom class
@@ -443,7 +462,9 @@ abstract class Mollom {
     }
 
     // Write all captured log messages.
-    $this->writeLog();
+    if ($this->writeLog) {
+      $this->writeLog();
+    }
 
     // If there is a result (only possible with a server list) and the last
     // request succeeded, return the result to the caller.
