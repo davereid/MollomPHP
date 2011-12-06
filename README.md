@@ -1,18 +1,15 @@
-
--- SUMMARY --
-
 A generic Mollom client PHP class.
 
 To submit bug reports and feature suggestions, or to track changes:
-  http://drupal.org/project/issues/mollom
+  https://github.com/Mollom/MollomPHP/issues
 
 
--- REQUIREMENTS --
+## Requirements
 
-* PHP 5
+* PHP 5.2.4 or later
 
 
--- USAGE --
+## Usage
 
 * Implement the Mollom class for your platform by extending it into a
   MollomMyPlatform class.
@@ -71,7 +68,7 @@ To submit bug reports and feature suggestions, or to track changes:
 * The full API documentation is available on http://mollom.com/api/rest
 
 
--- LICENSE --
+## License
 
 You may use this software under the terms of either the MIT License or the
 GNU General Public License (GPL), Version 2.
